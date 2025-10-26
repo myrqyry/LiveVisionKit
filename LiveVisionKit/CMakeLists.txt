@@ -22,8 +22,7 @@ endif()
 set(THREADS_PREFER_PTHREAD_FLAG ON)
 find_package(Threads REQUIRED)
 
-set(EIGEN_BUILD_PATH "./Dependencies/eigen/build/" CACHE PATH "The path to the Eigen build folder")
-find_package(Eigen3 REQUIRED NO_MODULE PATHS ${EIGEN_BUILD_PATH})
+find_package(Eigen3 REQUIRED NO_MODULE)
 
 # Include all dependencies
 target_include_directories(
