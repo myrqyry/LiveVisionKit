@@ -99,11 +99,19 @@ target_include_directories(
 
 # Link all dependencies
 add_dependencies(${PROJECT_NAME} lvk-core)
-target_link_libraries(
-    ${PROJECT_NAME}
-    ${OBS_BUILD_PATH}${OBS_REL_LIB_PATH}
-    lvk-core
-)
+if(TARGET obs-studio::obs)
+    target_link_libraries(
+        ${PROJECT_NAME}
+        lvk-core
+        obs-studio::obs
+    )
+else()
+    target_link_libraries(
+        ${PROJECT_NAME}
+        ${OBS_BUILD_PATH}${OBS_REL_LIB_PATH}
+        lvk-core
+    )
+endif()
 
 
 # Set up install rules
