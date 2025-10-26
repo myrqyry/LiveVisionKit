@@ -64,54 +64,25 @@ else()
 endif()
 
 
-# Set the OBS-Studio build path 
-set(OBS_BUILD_PATH "./Dependencies/obs-studio/build" CACHE PATH "The path to the OBS-Studio build folder")
-if(WIN32)
-    set(OBS_REL_INCLUDE_PATH "/install/include/")
-    set(OBS_REL_LIB_PATH "/install/bin/64bit/obs.lib")
-else()
-    set(OBS_REL_INCLUDE_PATH "/install/include/obs/")
-    set(OBS_REL_LIB_PATH "/install/lib/libobs.so")
-endif()
-
-# Check that the build path exists
-if(OBS_BUILD_PATH STREQUAL "")
-    message(FATAL_ERROR "OBS_BUILD_PATH was not provided!")
-else()
-    if(NOT EXISTS ${OBS_BUILD_PATH}${OBS_REL_INCLUDE_PATH})
-        message(FATAL_ERROR "Could not find OBS-Studio includes - Check OBS_BUILD_PATH")
-    endif()
-    if(NOT EXISTS ${OBS_BUILD_PATH}${OBS_REL_LIB_PATH})
-        message(FATAL_ERROR "Could not find OBS-Studio libraries - Check OBS_BUILD_PATH")
-    endif()
-    message(STATUS "${MI}Found OBS-Studio: YES")
-endif()
-
-
 # Include all dependencies
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(OBS_STUDIO REQUIRED obs-studio)
+
 target_include_directories(
     ${PROJECT_NAME}
     PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR} 
     ${LVK_CORE_DIR}
-    ${OBS_BUILD_PATH}${OBS_REL_INCLUDE_PATH}
+    ${OBS_STUDIO_INCLUDE_DIRS}
 )
 
 # Link all dependencies
 add_dependencies(${PROJECT_NAME} lvk-core)
-if(TARGET obs-studio::obs)
-    target_link_libraries(
-        ${PROJECT_NAME}
-        lvk-core
-        obs-studio::obs
-    )
-else()
-    target_link_libraries(
-        ${PROJECT_NAME}
-        ${OBS_BUILD_PATH}${OBS_REL_LIB_PATH}
-        lvk-core
-    )
-endif()
+target_link_libraries(
+    ${PROJECT_NAME}
+    ${OBS_STUDIO_LIBRARIES}
+    lvk-core
+)
 
 
 # Set up install rules
