@@ -1,17 +1,27 @@
-cmake_minimum_required(VERSION 3.21)
+cmake_minimum_required(VERSION 3.25)
 
-if(APPLE)
-    message(FATAL_ERROR "Apple systems are not supported!")
-endif()
+# if(APPLE)
+#     message(FATAL_ERROR "Apple systems are not supported!")
+# endif()
 
 set(MI "   ") # Message indents
 set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 set_property(GLOBAL PROPERTY PREDEFINED_TARGETS_FOLDER "CMakeTargets")
 
 
-# Set up project 
+# Set up project
 project(LiveVisionKit)
 message(STATUS "\nConfiguring LiveVisionKit...")
+
+# Multi-platform support (placeholder)
+if(APPLE)
+    set(USE_METAL ON)
+    # find_package(Metal REQUIRED) # Placeholder
+elseif(WIN32)
+    set(USE_DIRECTX ON)
+else()
+    set(USE_VULKAN ON)
+endif()
 
 # Project defines
 set(LVK_CORE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/LiveVisionKit/")
@@ -38,7 +48,7 @@ set(DISABLE_CHECKS "OFF" CACHE BOOL "Compile without asserts and pre-condition c
 set(OPENCV_BUILD_PATH "./Dependencies/opencv/build/" CACHE PATH "The path to the OpenCV build folder")
 
 # Load common dependencies (OpenCV)
-find_package(OpenCV REQUIRED PATHS ${OPENCV_BUILD_PATH} NO_DEFAULT_PATH)
+find_package(OpenCV 4.8.0 REQUIRED PATHS ${OPENCV_BUILD_PATH} NO_DEFAULT_PATH)
 if(OpenCV_FOUND)
     message(STATUS "${MI}Found OpenCV: YES")
     message(STATUS "${MI}OpenCV Version: ${OpenCV_VERSION}")
@@ -46,6 +56,9 @@ if(OpenCV_FOUND)
 else()
     message(FATAL_ERROR "Failed to find OpenCV!")
 endif()
+
+find_package(TensorflowLite QUIET)
+find_package(obs-studio QUIET)
 
 # If we are on Linux, we also need to load QT for OpenCV
 if(UNIX)

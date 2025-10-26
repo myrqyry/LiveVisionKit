@@ -28,11 +28,9 @@
 //---------------------------------------------------------------------------------------------------------------------
 
 OBS_DECLARE_MODULE()
-MODULE_EXPORT const char* obs_module_name(void)
-{
-	return "LiveVisionKit" VERSION;
-}
-OBS_MODULE_USE_DEFAULT_LOCALE(obs_module_name(), "en-US")
+OBS_MODULE_USE_DEFAULT_LOCALE("livevisionkit", "en-US")
+
+void register_websocket_commands(); // Forward declaration
 
 //---------------------------------------------------------------------------------------------------------------------
 
@@ -130,7 +128,14 @@ bool obs_module_load()
         register_ingest_test_source();
 	}
 
+    // Initialize WebSocket command handlers
+    register_websocket_commands();
 	return true;
+}
+
+void register_websocket_commands()
+{
+    // Placeholder for WebSocket command registration
 }
 
 //---------------------------------------------------------------------------------------------------------------------
