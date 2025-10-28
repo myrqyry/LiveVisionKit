@@ -27,28 +27,9 @@ namespace lvk
 
 //---------------------------------------------------------------------------------------------------------------------
 
-    // NOTE: if you set the window size to less than 9x9, OpenCV will
-    // run it on the CPU, leading to a large increase in CPU usage in
-    // exchange for it running much faster than the GPU version.
-    const cv::Size OPTICAL_TRACKER_WIN_SIZE = {11, 11};
-    constexpr auto OPTICAL_TRACKER_PYR_LEVELS = 3;
-    constexpr auto OPTICAL_TRACKER_MAX_ITERS = 5;
-
-    constexpr auto HOMOGRAPHY_DISTRIBUTION_THRESHOLD = 0.6f;
-
-//---------------------------------------------------------------------------------------------------------------------
-
 	FrameTracker::FrameTracker(const FrameTrackerSettings& settings)
-        : m_OpticalTracker(cv::SparsePyrLKOpticalFlow::create(
-              OPTICAL_TRACKER_WIN_SIZE, OPTICAL_TRACKER_PYR_LEVELS,
-              cv::TermCriteria(
-                  cv::TermCriteria::COUNT + cv::TermCriteria::EPS,
-                  OPTICAL_TRACKER_MAX_ITERS, 0.01
-              )
-          ))
 	{
         configure(settings);
-
 		restart();
 	}
 
@@ -63,28 +44,36 @@ namespace lvk
         LVK_ASSERT(settings.local_smoothing >= 0.0f);
         LVK_ASSERT(settings.min_motion_samples >= 4);
         LVK_ASSERT_01(settings.uniformity_threshold);
+        LVK_ASSERT(settings.optical_flow.is_valid());
+
+        m_OpticalFlowConfig = settings.optical_flow;
+        m_OpticalTracker = cv::SparsePyrLKOpticalFlow::create(
+            m_OpticalFlowConfig.window_size,
+            m_OpticalFlowConfig.pyramid_levels,
+            cv::TermCriteria(
+                cv::TermCriteria::COUNT + cv::TermCriteria::EPS,
+                m_OpticalFlowConfig.max_iterations,
+                m_OpticalFlowConfig.termination_epsilon
+            )
+        );
 
         m_FeatureDetector.configure(settings);
-        m_MatchStatus.reserve(m_FeatureDetector.max_feature_capacity());
-        m_InlierStatus.reserve(m_FeatureDetector.max_feature_capacity());
-        m_TrackedPoints.reserve(m_FeatureDetector.max_feature_capacity());
-        m_MatchedPoints.reserve(m_FeatureDetector.max_feature_capacity());
         m_TrackingRegion = cv::Rect2f({0,0}, settings.detection_resolution);
 
-        if(settings.motion_resolution != m_Settings.motion_resolution || m_MeshConstraints.empty())
+        if(settings.motion_resolution != m_Settings.motion_resolution || m_StaticMeshConstraints.empty())
         {
             m_OptimizedMesh = Eigen::VectorXf::Zero(2 * settings.motion_resolution.area());
             m_StaticConstraintCount = generate_mesh_constraints(
                 m_TrackingRegion,
                 settings.motion_resolution,
-                m_MeshConstraints
+                m_StaticMeshConstraints
             );
         }
 
         // We need to reset the detector and rescale the last frame if the resolution changed.
         if(settings.detection_resolution != m_Settings.detection_resolution && m_FrameInitialized)
         {
-            m_MatchedPoints.clear();
+            matched_points().clear();
             m_FeatureDetector.reset();
             cv::resize(m_CurrentFrame, m_CurrentFrame, m_Settings.detection_resolution, 0, 0, cv::INTER_LINEAR);
         }
@@ -123,6 +112,8 @@ namespace lvk
             return std::nullopt;
         }
 
+        m_MemoryPool.ensure_capacity(m_FeatureDetector.max_feature_capacity());
+
         // Detect features in the current frame.
         const auto distribution = m_FeatureDetector.detect(m_CurrentFrame, m_TrackedFeatures);
         if(m_TrackedFeatures.size() < m_Settings.min_motion_samples || distribution < m_Settings.uniformity_threshold)
@@ -132,22 +123,22 @@ namespace lvk
         }
 
         // Convert features to tracking points
-        m_TrackedPoints.clear();
+        auto& tracked_pts = tracked_points();
         for(const auto& feature : m_TrackedFeatures)
-            m_TrackedPoints.emplace_back(feature.pt);
+            tracked_pts.emplace_back(feature.pt);
 
 		// Match tracking points.
         m_OpticalTracker->calc(
             m_PreviousFrame,
             m_CurrentFrame,
-            m_TrackedPoints,
-            m_MatchedPoints,
-            m_MatchStatus
+            tracked_pts,
+            matched_points(),
+            match_status()
         );
 
         // Filter out unmatched points
-        fast_filter(m_TrackedFeatures, m_TrackedPoints, m_MatchedPoints, m_MatchStatus);
-        if(m_MatchedPoints.size() < m_Settings.min_motion_samples)
+        fast_filter(m_TrackedFeatures, tracked_pts, matched_points(), match_status());
+        if(matched_points().size() < m_Settings.min_motion_samples)
         {
             m_TrackedFeatures.clear();
             return std::nullopt;
@@ -160,33 +151,35 @@ namespace lvk
             estimate_local_motions(
                 motion,
                 m_TrackingRegion,
-                m_TrackedPoints, m_MatchedPoints,
-                m_InlierStatus
+                tracked_pts,
+                matched_points(),
+                inlier_status()
             );
         }
         else
         {
             estimate_global_motion(
                 motion,
-                distribution > HOMOGRAPHY_DISTRIBUTION_THRESHOLD,
+                distribution > m_OpticalFlowConfig.homography_distribution_threshold,
                 m_TrackingRegion,
-                m_TrackedPoints, m_MatchedPoints,
-                m_InlierStatus
+                tracked_pts,
+                matched_points(),
+                inlier_status()
             );
         }
 
         // Measure tracking stability as the inlier ratio
-        m_TrackingStability = ratio_of<uint8_t>(m_InlierStatus, 1);
+        m_TrackingStability = ratio_of<uint8_t>(inlier_status(), 1);
 
         // Filter outliers so we're left with only high quality points,
         // then propagate them so that they're re-used in the detector.
-        for(int i = m_InlierStatus.size() - 1; i >= 0; i--)
+        for(int i = inlier_status().size() - 1; i >= 0; i--)
         {
-            if(m_InlierStatus[i])
+            if(inlier_status()[i])
             {
                 // Borrow class id integer to store feature age.
                 m_TrackedFeatures[i].class_id++;
-                m_TrackedFeatures[i].pt = m_MatchedPoints[i];
+                m_TrackedFeatures[i].pt = matched_points()[i];
             }
             else fast_erase(m_TrackedFeatures, i);
         }
@@ -215,6 +208,8 @@ namespace lvk
             region.tl(), (cv::Size2f(mesh_size) / cv::Size2f(grid_size)) * region.size()
         ));
 
+        auto& dynamic_constraints = m_MemoryPool.dynamic_constraints_pool;
+
         // Initialize linear system to optimize the mesh
         const int constraints = m_StaticConstraintCount + 2 * tracked_points.size();
         Eigen::SparseMatrix<float> A(constraints, 2 * mesh_size.area());
@@ -229,7 +224,6 @@ namespace lvk
         });
 
         // Jump to the end of the static mesh constraints to add dynamic ones
-        const int static_triplet_count = m_MeshConstraints.size();
         constraint_offset = m_StaticConstraintCount;
 
         // Add feature warping constraints
@@ -255,23 +249,28 @@ namespace lvk
                 {mesh_grid.key_to_point(k00), mesh_grid.key_to_point(k11)}, src_point
             );
 
-            m_MeshConstraints.emplace_back(constraint_offset, i00, w[0]);
-            m_MeshConstraints.emplace_back(constraint_offset, i01, w[1]);
-            m_MeshConstraints.emplace_back(constraint_offset, i11, w[2]);
-            m_MeshConstraints.emplace_back(constraint_offset, i10, w[3]);
+            dynamic_constraints.emplace_back(constraint_offset, i00, w[0]);
+            dynamic_constraints.emplace_back(constraint_offset, i01, w[1]);
+            dynamic_constraints.emplace_back(constraint_offset, i11, w[2]);
+            dynamic_constraints.emplace_back(constraint_offset, i10, w[3]);
             b(constraint_offset) = dst_point.x;
             constraint_offset++;
 
-            m_MeshConstraints.emplace_back(constraint_offset, i00 + 1, w[0]);
-            m_MeshConstraints.emplace_back(constraint_offset, i01 + 1, w[1]);
-            m_MeshConstraints.emplace_back(constraint_offset, i11 + 1, w[2]);
-            m_MeshConstraints.emplace_back(constraint_offset, i10 + 1, w[3]);
+            dynamic_constraints.emplace_back(constraint_offset, i00 + 1, w[0]);
+            dynamic_constraints.emplace_back(constraint_offset, i01 + 1, w[1]);
+            dynamic_constraints.emplace_back(constraint_offset, i11 + 1, w[2]);
+            dynamic_constraints.emplace_back(constraint_offset, i10 + 1, w[3]);
             b(constraint_offset) = dst_point.y;
             constraint_offset++;
         }
 
+        std::vector<Eigen::Triplet<float>> all_constraints;
+        all_constraints.reserve(m_StaticMeshConstraints.size() + dynamic_constraints.size());
+        all_constraints.insert(all_constraints.end(), m_StaticMeshConstraints.begin(), m_StaticMeshConstraints.end());
+        all_constraints.insert(all_constraints.end(), dynamic_constraints.begin(), dynamic_constraints.end());
+
         // Solve the system to get the optimal motion mesh.
-        A.setFromTriplets(m_MeshConstraints.begin(), m_MeshConstraints.end());
+        A.setFromTriplets(all_constraints.begin(), all_constraints.end());
         Eigen::LeastSquaresConjugateGradient<Eigen::SparseMatrix<float>> solver(A);
         m_OptimizedMesh = solver.solveWithGuess(b, m_OptimizedMesh);
 
@@ -279,14 +278,14 @@ namespace lvk
         inlier_status.resize(tracked_points.size());
         for(int i = 0; i < tracked_points.size(); i++)
         {
-            const int quad_x_index = i * 8 + static_triplet_count;
+            const int quad_x_index = i * 8;
             const int quad_y_index = quad_x_index + 4;
 
 
-            const auto& qx0 = m_MeshConstraints[quad_x_index + 0];
-            const auto& qx1 = m_MeshConstraints[quad_x_index + 1];
-            const auto& qx2 = m_MeshConstraints[quad_x_index + 2];
-            const auto& qx3 = m_MeshConstraints[quad_x_index + 3];
+            const auto& qx0 = dynamic_constraints[quad_x_index + 0];
+            const auto& qx1 = dynamic_constraints[quad_x_index + 1];
+            const auto& qx2 = dynamic_constraints[quad_x_index + 2];
+            const auto& qx3 = dynamic_constraints[quad_x_index + 3];
 
             const float x = qx0.value() * m_OptimizedMesh(qx0.col())
                           + qx1.value() * m_OptimizedMesh(qx1.col())
@@ -294,10 +293,10 @@ namespace lvk
                           + qx3.value() * m_OptimizedMesh(qx3.col());
 
 
-            const auto& qy0 = m_MeshConstraints[quad_y_index + 0];
-            const auto& qy1 = m_MeshConstraints[quad_y_index + 1];
-            const auto& qy2 = m_MeshConstraints[quad_y_index + 2];
-            const auto& qy3 = m_MeshConstraints[quad_y_index + 3];
+            const auto& qy0 = dynamic_constraints[quad_y_index + 0];
+            const auto& qy1 = dynamic_constraints[quad_y_index + 1];
+            const auto& qy2 = dynamic_constraints[quad_y_index + 2];
+            const auto& qy3 = dynamic_constraints[quad_y_index + 3];
 
             const float y = qy0.value() * m_OptimizedMesh(qy0.col())
                           + qy1.value() * m_OptimizedMesh(qy1.col())
@@ -308,9 +307,6 @@ namespace lvk
             const auto error = std::abs(x - b(x_constraint)) + std::abs(y - b(y_constraint));
             inlier_status[i] = error < m_Settings.acceptance_threshold;
         }
-
-        // Reset mesh constraints back to the static ones.
-        m_MeshConstraints.resize(static_triplet_count);
 
         // Upload results into the motion mesh as offsets
         auto& mesh_offsets = motion_mesh.offsets();
@@ -343,8 +339,8 @@ namespace lvk
         params.loMethod = cv::LOCAL_OPTIM_SIGMA;
         params.loIterations = 10;
         params.loSampleSize = 20;
-        params.final_polisher = cv::MAGSAC;
-        params.final_polisher_iterations = 0;
+        //params.final_polisher = cv::MAGSAC;
+        //params.final_polisher_iterations = 0;
 
         if(homography)
         {
@@ -403,7 +399,9 @@ namespace lvk
 
         // Add local mesh smoothness constraints
         // NOTE: accompanying B vector must be set to zero.
-        const auto v1 = -mesh_grid.key_size().aspectRatio(), v2 = -1.0 / v1;
+        const auto aspect_ratio = mesh_grid.key_size().aspectRatio();
+        const auto v1 = (aspect_ratio != 0.0f) ? -aspect_ratio : -1.0f;
+        const auto v2 = (v1 != 0.0f) ? -1.0 / v1 : -1.0f;
         mesh_grid.for_each([&](const int index, const cv::Point& coord) {
             // Minimize some of the optimization load by only applying the constraint
             // where needed. In particular, all edge quads and then a checkerboard
@@ -458,21 +456,21 @@ namespace lvk
 
 //---------------------------------------------------------------------------------------------------------------------
 
-    float FrameTracker::tracking_stability() const
+    float FrameTracker::tracking_stability() const noexcept
     {
         return m_TrackingStability;
     }
 
 //---------------------------------------------------------------------------------------------------------------------
 
-    const cv::Size& FrameTracker::motion_resolution() const
+    const cv::Size& FrameTracker::motion_resolution() const noexcept
     {
         return m_Settings.motion_resolution;
     }
 
 //---------------------------------------------------------------------------------------------------------------------
 
-    const cv::Size& FrameTracker::tracking_resolution() const
+    const cv::Size& FrameTracker::tracking_resolution() const noexcept
     {
         return m_Settings.detection_resolution;
     }

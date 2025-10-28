@@ -76,29 +76,47 @@ namespace lvk
         // This reads frames from the input stream and passes them off for filtering.
         auto input_thread = std::thread([&](){
             Frame read_frame;
-            while(input.read(read_frame) && !terminate_input)
+            while(!terminate_input)
             {
-                // Assume the input frame is BGR
-                read_frame.format = VideoFrame::BGR;
+                try {
+                    if (!input.read(read_frame)) {
+                        // End of stream or read error
+                        break;
+                    }
+                    if (read_frame.empty()) {
+                        continue; // Skip empty frames
+                    }
+                    // Validate frame format
+                    if (read_frame.channels() != 3) {
+                        throw std::runtime_error("Unexpected frame format");
+                    }
+                    read_frame.format = VideoFrame::BGR;
+                    // Set frame timestamp if supported, otherwise set it to zero.
+                    const auto stream_position = std::max(0.0, input.get(cv::CAP_PROP_POS_MSEC));
+                    read_frame.timestamp = static_cast<uint64_t>(Time::Milliseconds(stream_position).nanoseconds());
 
-                // Set frame timestamp if supported, otherwise set it to zero.
-                const auto stream_position = std::max(0.0, input.get(cv::CAP_PROP_POS_MSEC));
-                read_frame.timestamp = static_cast<uint64_t>(Time::Milliseconds(stream_position).nanoseconds());
+                    // Push new frame onto the input queue
+                    {
+                        std::unique_lock<std::mutex> queue_lock(input_mutex);
 
-                // Push new frame onto the input queue
-                {
-                    std::unique_lock<std::mutex> queue_lock(input_mutex);
+                        // If the input queue is saturated, wait until a frame is consumed
+                        while(input_queue.size() >= max_buffer_frames)
+                            input_consume_flag.wait(queue_lock);
 
-                    // If the input queue is saturated, wait until a frame is consumed
-                    while(input_queue.size() >= max_buffer_frames)
-                        input_consume_flag.wait(queue_lock);
-
-                    input_queue.push(std::move(read_frame));
-                    if(input_queue.size() == 1)
-                        input_available_flag.notify_one();
+                        input_queue.push(std::move(read_frame));
+                        if(input_queue.size() == 1)
+                            input_available_flag.notify_one();
+                    }
+                } catch (const std::exception& e) {
+                    // Log error and attempt recovery
+                    std::cerr << "Frame processing error: " << e.what() << std::endl;
+                    continue;
                 }
             }
-            input_finished = true;
+            {
+                std::lock_guard<std::mutex> lock(input_mutex);
+                input_finished = true;
+            }
             input_available_flag.notify_one();
         });
 

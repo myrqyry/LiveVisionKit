@@ -24,23 +24,71 @@
 #include "Math/WarpMesh.hpp"
 #include "Eigen/Geometry"
 #include "Eigen/Sparse"
+#include <vector>
+#include <algorithm>
 
 namespace lvk
 {
+
+struct FrameTrackerMemoryPool {
+    std::vector<cv::Point2f> tracked_points_pool, matched_points_pool;
+    std::vector<uint8_t> match_status_pool, inlier_status_pool;
+    std::vector<cv::KeyPoint> keypoint_pool;
+    std::vector<Eigen::Triplet<float>> dynamic_constraints_pool;
+
+    size_t current_capacity = 0;
+
+    void ensure_capacity(size_t required_capacity) {
+        if (required_capacity > current_capacity) {
+            const size_t new_capacity = std::max(required_capacity, current_capacity * 2);
+
+            tracked_points_pool.reserve(new_capacity);
+            matched_points_pool.reserve(new_capacity);
+            match_status_pool.reserve(new_capacity);
+            inlier_status_pool.reserve(new_capacity);
+            keypoint_pool.reserve(new_capacity);
+            dynamic_constraints_pool.reserve(new_capacity * 8);
+
+            current_capacity = new_capacity;
+        }
+
+        tracked_points_pool.clear();
+        matched_points_pool.clear();
+        match_status_pool.clear();
+        inlier_status_pool.clear();
+        keypoint_pool.clear();
+        dynamic_constraints_pool.clear();
+    }
+};
+
+struct OpticalFlowConfig {
+    cv::Size window_size{11, 11};
+    int pyramid_levels = 3;
+    int max_iterations = 5;
+    double termination_epsilon = 0.01;
+    double homography_distribution_threshold = 0.6;
+
+    bool is_valid() const {
+        return window_size.width > 0 && window_size.height > 0 &&
+               pyramid_levels > 0 && max_iterations > 0 &&
+               termination_epsilon > 0 &&
+               homography_distribution_threshold > 0 &&
+               homography_distribution_threshold <= 1.0;
+    }
+};
 
     struct FrameTrackerSettings : public FeatureDetectorSettings
     {
         cv::Size motion_resolution = {16, 16};
 
-        // Local Motion Constraints
         bool track_local_motions = true;
         float temporal_smoothing = 1.0f;
         float local_smoothing = 20.0f;
 
-        // Robustness Constraints
         size_t min_motion_samples = 75;
         float acceptance_threshold = 8.0f;
         float uniformity_threshold = 0.20f;
+        OpticalFlowConfig optical_flow;
     };
 
 	class FrameTracker final : public Configurable<FrameTrackerSettings>
@@ -55,11 +103,11 @@ namespace lvk
 
 		void restart();
 
-        float tracking_stability() const;
+        float tracking_stability() const noexcept;
 
-        const cv::Size& motion_resolution() const;
+        const cv::Size& motion_resolution() const noexcept;
 
-        const cv::Size& tracking_resolution() const;
+        const cv::Size& tracking_resolution() const noexcept;
 
 		const std::vector<cv::KeyPoint>& features() const;
 
@@ -96,16 +144,21 @@ namespace lvk
 
         FeatureDetector m_FeatureDetector;
         std::vector<cv::KeyPoint> m_TrackedFeatures;
-        std::vector<cv::Point2f> m_TrackedPoints, m_MatchedPoints;
 
         cv::Rect2f m_TrackingRegion;
         float m_TrackingStability = 0;
-		std::vector<uint8_t> m_MatchStatus, m_InlierStatus;
         cv::Ptr<cv::SparsePyrLKOpticalFlow> m_OpticalTracker = nullptr;
 
         Eigen::VectorXf m_OptimizedMesh;
-        std::vector<Eigen::Triplet<float>> m_MeshConstraints;
+        std::vector<Eigen::Triplet<float>> m_StaticMeshConstraints;
         int m_StaticConstraintCount = 0;
-	};
 
+        FrameTrackerMemoryPool m_MemoryPool;
+        OpticalFlowConfig m_OpticalFlowConfig;
+
+        std::vector<cv::Point2f>& tracked_points() { return m_MemoryPool.tracked_points_pool; }
+        std::vector<cv::Point2f>& matched_points() { return m_MemoryPool.matched_points_pool; }
+        std::vector<uint8_t>& match_status() { return m_MemoryPool.match_status_pool; }
+        std::vector<uint8_t>& inlier_status() { return m_MemoryPool.inlier_status_pool; }
+	};
 }
