@@ -95,7 +95,17 @@ namespace lvk
         }
 
         // Track the motion of the incoming frame.
-        input.viewAsFormat(m_TrackingFrame, VideoFrame::GRAY);
+        if (input.format == VideoFrame::GRAY) {
+            m_TrackingFrame = input; // No conversion needed
+        } else {
+            // Use GPU acceleration if available
+            if (cv::ocl::useOpenCL()) {
+                cv::cvtColor(input, m_TrackingFrame, cv::COLOR_BGR2GRAY);
+                m_TrackingFrame.format = VideoFrame::GRAY;
+            } else {
+                input.viewAsFormat(m_TrackingFrame, VideoFrame::GRAY);
+            }
+        }
         auto motion = m_FrameTracker.track(m_TrackingFrame).value_or(m_NullMotion);
 
         // Apply quality assurance policies

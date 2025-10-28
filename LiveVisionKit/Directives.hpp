@@ -26,9 +26,17 @@
 
 // taken from https://stackoverflow.com/a/8488201
 #ifdef _WIN32
-#define LVK_FILE (strrchr(__FILE__, '\\') ? strrchr(__FILE__, '\\') + 1 : __FILE__)
+#define LVK_FILE ([]() -> const char* { \
+    const char* path = __FILE__; \
+    const char* name = strrchr(path, '\\'); \
+    return name ? (name + 1) : path; \
+}())
 #else 
-#define LVK_FILE (strrchr(__FILE__, '/') ? strrchr(__FILE__, '/') + 1 : __FILE__)
+#define LVK_FILE ([]() -> const char* { \
+    const char* path = __FILE__; \
+    const char* name = strrchr(path, '/'); \
+    return name ? (name + 1) : path; \
+}())
 #endif
 
 
@@ -37,9 +45,9 @@
 namespace lvk::context
 {
     extern std::function<void(
-        std::string file,
-        std::string function,
-        std::string assertion
+        const std::string& file,
+        const std::string& function,
+        const std::string& assertion
     )> assert_handler;
 }
 
