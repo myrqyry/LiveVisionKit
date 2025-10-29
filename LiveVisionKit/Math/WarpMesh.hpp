@@ -189,3 +189,8 @@ namespace lvk
     WarpMesh operator/(const float scaling, const WarpMesh& mesh);
 
 }
+
+namespace lvk
+{
+    typedef WarpMesh MotionVector;
+}

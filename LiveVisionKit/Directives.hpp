@@ -99,3 +99,7 @@ namespace lvk::context
 
 
 // LOGGING
+namespace lvk::context
+{
+    void log_error(const std::string& message);
+}
