@@ -21,60 +21,83 @@
 #include "Vision/FrameTracker.hpp"
 #include "Vision/PathSmoother.hpp"
 #include "Utility/Configurable.hpp"
+#include "Data/StreamBuffer.hpp"
+#include "Math/WarpMesh.hpp"
+
+#include <mutex>
+#include <atomic>
+#include <shared_mutex>
+#include <string>
 
 namespace lvk
 {
-
-	struct StabilizationFilterSettings : public FrameTrackerSettings, public PathSmootherSettings
-	{
+    struct StabilizationFilterSettings : public FrameTrackerSettings, public PathSmootherSettings
+    {
         cv::Size motion_resolution = {2, 2};
 
-		cv::Scalar background_colour = {255,0,255};
+        cv::Scalar background_colour = {255,0,255};
         bool crop_to_stable_region = false;
-		bool stabilize_output = true;
+        bool stabilize_output = true;
 
         // Quality Assurance
         float min_scene_quality = 0.8f;
         float min_tracking_quality = 0.3f;
-	};
+    };
 
+    class StabilizationFilter final : public VideoFilter, public Configurable<StabilizationFilterSettings>
+    {
+    public:
+        explicit StabilizationFilter(const StabilizationFilterSettings& settings = {});
 
-	class StabilizationFilter final : public VideoFilter, public Configurable<StabilizationFilterSettings>
-	{
-	public:
-
-		explicit StabilizationFilter(const StabilizationFilterSettings& settings = {});
-
-		void configure(const StabilizationFilterSettings& settings) override;
-
-		void restart();
-
+        void configure(const StabilizationFilterSettings& settings) override;
+        void restart();
         bool ready() const;
-
-		void reset_context();
-
+        void reset_context();
         void draw_trackers();
-
         void draw_motion_mesh();
-
         size_t frame_delay() const;
+        cv::Rect stable_region() const;
 
-		cv::Rect stable_region() const;
-
-	private:
-
+    private:
         void filter(VideoFrame&& input, VideoFrame& output) override;
 
-	private:
-		FrameTracker m_FrameTracker;
-		PathSmoother m_PathSmoother;
+        // Performance optimization: Pre-allocated working buffers
+        VideoFrame m_GrayBuffer;
+        VideoFrame m_TempBuffer;
+        bool m_BuffersInitialized = false;
 
+        void ensureBuffersAllocated(const cv::Size& frameSize);
+        bool convertToGray(const VideoFrame& input, VideoFrame& output, std::string& error) const;
+
+        // Processing context for cleaner method decomposition
+        struct ProcessingContext {
+            VideoFrame trackingFrame;
+            MotionVector motion{WarpMesh::MinimumSize};
+            float trackingQuality;
+            bool shouldStabilize;
+        };
+
+        // Method decomposition for better maintainability
+        bool prepareFrame(const VideoFrame& input, ProcessingContext& context, std::string& error);
+        void updateQualityMetrics(float trackingQuality);
+        MotionVector applyQualityControl(const MotionVector& motion) const;
+        void processStabilizedOutput(const MotionVector& correctedMotion, VideoFrame& output);
+        void handlePassthroughMode(VideoFrame&& input, VideoFrame& output);
+
+        // Core processing components
+        FrameTracker m_FrameTracker;
+        PathSmoother m_PathSmoother;
         StreamBuffer<Frame> m_FrameQueue{1};
         VideoFrame m_WarpFrame, m_TrackingFrame;
         WarpMesh m_NullMotion{WarpMesh::MinimumSize};
 
-        float m_SceneQuality = 0.0f;
-        float m_TrustFactor = 0.0f;
-    };
+        // Thread safety: Atomic state variables
+        std::atomic<float> m_SceneQuality{1.0f};
+        std::atomic<float> m_TrustFactor{1.0f};
+        std::atomic<bool> m_IsProcessing{false};
 
+        // Thread safety: Synchronization primitives
+        mutable std::shared_mutex m_configMutex;
+        mutable std::mutex m_processingMutex;
+    };
 }

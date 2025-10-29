@@ -31,4 +31,8 @@ namespace lvk::context {
              std::exit(EXIT_FAILURE);
 #endif
         };
+
+    void log_error(const std::string& message) {
+        std::cerr << "Error: " << message << std::endl;
+    }
 }

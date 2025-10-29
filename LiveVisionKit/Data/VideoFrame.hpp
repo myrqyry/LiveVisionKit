@@ -34,9 +34,9 @@ namespace lvk
 
         VideoFrame();
 
-        VideoFrame(const VideoFrame& frame);
+        VideoFrame(const VideoFrame& other);
 
-        VideoFrame(VideoFrame&& frame) noexcept;
+        VideoFrame(VideoFrame&& other) noexcept;
 
         explicit VideoFrame(const uint64_t timestamp);
 
@@ -48,9 +48,16 @@ namespace lvk
         virtual ~VideoFrame() = default;
 
 
-        VideoFrame& operator=(VideoFrame&& frame) noexcept;
+        VideoFrame& operator=(const VideoFrame& other);
 
-        VideoFrame& operator=(const VideoFrame& frame) noexcept;
+        VideoFrame& operator=(VideoFrame&& other) noexcept;
+
+
+        // Resource state validation
+        bool isValid() const;
+
+        // Safe resource cleanup
+        void safeRelease();
 
 
         VideoFrame clone() const; /* override */

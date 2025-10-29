@@ -37,19 +37,22 @@ namespace lvk
 
 //---------------------------------------------------------------------------------------------------------------------
 
-    VideoFrame::VideoFrame(const VideoFrame& frame)
-        : cv::UMat(frame),
-          timestamp(frame.timestamp),
-          format(frame.format)
+    VideoFrame::VideoFrame(const VideoFrame& other)
+        : cv::UMat(other),
+          timestamp(other.timestamp),
+          format(other.format)
     {}
 
 //---------------------------------------------------------------------------------------------------------------------
 
-    VideoFrame::VideoFrame(VideoFrame&& frame) noexcept
-        : cv::UMat(std::move(frame)),
-          timestamp(frame.timestamp),
-          format(frame.format)
-    {}
+    VideoFrame::VideoFrame(VideoFrame&& other) noexcept
+        : cv::UMat(std::move(other)),
+          timestamp(other.timestamp),
+          format(other.format)
+    {
+        other.timestamp = 0;
+        other.format = UNKNOWN;
+    }
 
 //---------------------------------------------------------------------------------------------------------------------
 
@@ -69,23 +72,27 @@ namespace lvk
 
 //---------------------------------------------------------------------------------------------------------------------
 
-    VideoFrame& VideoFrame::operator=(VideoFrame&& frame) noexcept
+    VideoFrame& VideoFrame::operator=(const VideoFrame& other)
     {
-        format = frame.format;
-        timestamp = frame.timestamp;
-        cv::UMat::operator=(std::move(frame));
-
+        if (this != &other) {
+            cv::UMat::operator=(other);
+            timestamp = other.timestamp;
+            format = other.format;
+        }
         return *this;
     }
 
 //---------------------------------------------------------------------------------------------------------------------
 
-    VideoFrame& VideoFrame::operator=(const VideoFrame& frame) noexcept
+    VideoFrame& VideoFrame::operator=(VideoFrame&& other) noexcept
     {
-        format = frame.format;
-        timestamp = frame.timestamp;
-        cv::UMat::operator=(frame);
-
+        if (this != &other) {
+            cv::UMat::operator=(std::move(other));
+            timestamp = other.timestamp;
+            format = other.format;
+            other.timestamp = 0;
+            other.format = UNKNOWN;
+        }
         return *this;
     }
 
@@ -314,6 +321,26 @@ namespace lvk
             reformatTo(view, new_format);
         }
         else view = *this;
+    }
+
+//---------------------------------------------------------------------------------------------------------------------
+
+    bool VideoFrame::isValid() const
+    {
+        return !empty() && format != UNKNOWN && timestamp > 0;
+    }
+
+//---------------------------------------------------------------------------------------------------------------------
+
+    void VideoFrame::safeRelease()
+    {
+        try {
+            release();
+            timestamp = 0;
+            format = UNKNOWN;
+        } catch (...) {
+            // Log error but don't throw in destructor context
+        }
     }
 
 //---------------------------------------------------------------------------------------------------------------------
