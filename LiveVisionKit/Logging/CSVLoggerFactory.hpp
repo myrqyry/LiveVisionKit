@@ -15,20 +15,32 @@
 //    along with this program.  If not, see <https://www.gnu.org/licenses/>.
 // 	  **********************************************************************
 
-#include "Directives.hpp"
-#include <iostream>
-#include <stdexcept>
+#pragma once
 
-namespace lvk::context {
-    std::function<void(const std::string&, const std::string&, const std::string&)> assert_handler =
-        [](const std::string& file, const std::string& function, const std::string& assertion) {
-             std::string error_message = "Assertion failed: " + assertion + " in " + function + " at " + file;
-             std::cerr << error_message << std::endl;
-#ifndef NDEBUG // Only throw in debug builds
-             throw std::runtime_error(error_message);
-#else
-             // In release builds, you might log and attempt graceful shutdown or just exit
-             std::exit(EXIT_FAILURE);
-#endif
-        };
+#include "../Directives.hpp"
+#include "CSVLogger.hpp"
+
+#include <map>
+#include <memory>
+#include <mutex>
+
+namespace lvk {
+    class CSVLoggerFactory {
+    public:
+        static CSVLogger& getLogger(const std::string& name, const std::string& path) {
+            static std::mutex mtx;
+            std::lock_guard<std::mutex> lock(mtx);
+
+            static std::map<std::string, std::unique_ptr<std::ofstream>> files;
+            static std::map<std::string, std::unique_ptr<CSVLogger>> loggers;
+
+            if (loggers.find(name) == loggers.end()) {
+                auto file_stream = std::make_unique<std::ofstream>(path);
+                LVK_ASSERT(file_stream->good());
+                loggers[name] = std::make_unique<CSVLogger>(*file_stream);
+                files[name] = std::move(file_stream);
+            }
+            return *loggers[name];
+        }
+    };
 }

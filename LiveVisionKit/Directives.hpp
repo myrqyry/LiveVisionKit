@@ -24,20 +24,15 @@
 
 // UTILITY
 
-// taken from https://stackoverflow.com/a/8488201
-#ifdef _WIN32
-#define LVK_FILE ([]() -> const char* { \
-    const char* path = __FILE__; \
-    const char* name = strrchr(path, '\\'); \
-    return name ? (name + 1) : path; \
-}())
-#else 
-#define LVK_FILE ([]() -> const char* { \
-    const char* path = __FILE__; \
-    const char* name = strrchr(path, '/'); \
-    return name ? (name + 1) : path; \
-}())
-#endif
+namespace lvk::detail {
+    inline const char* get_short_filename(const char* path) {
+        const char* fwd = strrchr(path, '/');
+        const char* bwd = strrchr(path, '\\');
+        if (!fwd && !bwd) return path;
+        return (fwd > bwd ? fwd : bwd) + 1;
+    }
+}
+#define LVK_FILE lvk::detail::get_short_filename(__FILE__)
 
 
 // ASSERTS
@@ -104,16 +99,3 @@ namespace lvk::context
 
 
 // LOGGING
-
-// NOTE: Resulting CSVLogger will be named '_var'
-#define INIT_CSV(var, path)                                                                                            \
-    static std::ofstream log_file_##var;                                                                               \
-    static bool log_init_##var = false;                                                                                \
-    if(!log_init_##var)                                                                                                \
-    {                                                                                                                  \
-        log_file_##var.open(path);                                                                                     \
-        log_init_##var = true;                                                                                         \
-                                                                                                                       \
-        LVK_ASSERT(log_file_##var.good())                                                                              \
-    }                                                                                                                  \
-    static lvk::CSVLogger _##var(log_file_##var)
