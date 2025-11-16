@@ -79,6 +79,9 @@ namespace lvk
 
         // Method decomposition for better maintainability
         bool prepareFrame(const VideoFrame& input, ProcessingContext& context, std::string& error);
+        bool trackMotion(const VideoFrame& input, ProcessingContext& context, std::string& error);
+        void stabilizeFrame(ProcessingContext& context, VideoFrame& output);
+        void processFrame(ProcessingContext& context, VideoFrame&& input, VideoFrame& output);
         void updateQualityMetrics(float trackingQuality);
         MotionVector applyQualityControl(const MotionVector& motion) const;
         void processStabilizedOutput(const MotionVector& correctedMotion, VideoFrame& output);
