@@ -115,6 +115,21 @@ namespace lvk
 
 //---------------------------------------------------------------------------------------------------------------------
 
+    bool StabilizationFilter::trackMotion(const VideoFrame& input, ProcessingContext& context, std::string& errorMsg)
+    {
+        auto motionResult = m_FrameTracker.track(input);
+        if (motionResult.has_value()) {
+            context.motion = motionResult.value();
+            context.trackingQuality = m_FrameTracker.tracking_stability();
+        } else {
+            context.motion = m_NullMotion;
+            context.trackingQuality = 0.0f;
+        }
+        return true;
+    }
+
+//---------------------------------------------------------------------------------------------------------------------
+
     bool StabilizationFilter::prepareFrame(const VideoFrame& input, ProcessingContext& context, std::string& errorMsg)
     {
         // Convert to grayscale for tracking
@@ -125,15 +140,8 @@ namespace lvk
         }
 
         // Track motion
-        auto motionResult = m_FrameTracker.track(context.trackingFrame);
-        if (motionResult.has_value()) {
-            context.motion = motionResult.value();
-            context.trackingQuality = m_FrameTracker.tracking_stability();
-        } else {
-            // Use null motion but continue processing
-            context.motion = m_NullMotion;
-            context.trackingQuality = 0.0f;
-            // Note: This is not necessarily an error, just degraded tracking
+        if (!trackMotion(context.trackingFrame, context, errorMsg)) {
+            return false;
         }
 
         context.shouldStabilize = m_Settings.stabilize_output;
@@ -201,6 +209,35 @@ namespace lvk
 
 //---------------------------------------------------------------------------------------------------------------------
 
+    void StabilizationFilter::processFrame(ProcessingContext& context, VideoFrame&& input, VideoFrame& output)
+    {
+        std::string errorMsg;
+        if (!prepareFrame(input, context, errorMsg)) {
+            lvk::context::log_error("Frame preparation failed: " + errorMsg);
+            output.release();
+            return;
+        }
+
+        m_FrameQueue.push(std::move(input));
+        stabilizeFrame(context, output);
+    }
+
+//---------------------------------------------------------------------------------------------------------------------
+
+    void StabilizationFilter::stabilizeFrame(ProcessingContext& context, VideoFrame& output)
+    {
+        updateQualityMetrics(context.trackingQuality);
+        auto controlledMotion = applyQualityControl(context.motion);
+        if (ready()) {
+            auto correction = m_PathSmoother.next(controlledMotion);
+            processStabilizedOutput(correction, output);
+        } else {
+            output.release();
+        }
+    }
+
+//---------------------------------------------------------------------------------------------------------------------
+
 	void StabilizationFilter::filter(VideoFrame&& input, VideoFrame& output)
 	{
         std::lock_guard<std::mutex> processingLock(m_processingMutex);
@@ -227,23 +264,7 @@ namespace lvk
         }
 
         ProcessingContext context;
-        std::string errorMsg;
-        if (!prepareFrame(input, context, errorMsg)) {
-            lvk::context::log_error("Frame preparation failed: " + errorMsg);
-            output.release();
-            return;
-        }
-
-        updateQualityMetrics(context.trackingQuality);
-        auto controlledMotion = applyQualityControl(context.motion);
-        m_FrameQueue.push(std::move(input));
-
-        if (ready()) {
-            auto correction = m_PathSmoother.next(controlledMotion);
-            processStabilizedOutput(correction, output);
-        } else {
-            output.release();
-        }
+        processFrame(context, std::move(input), output);
 	}
 
 //---------------------------------------------------------------------------------------------------------------------
