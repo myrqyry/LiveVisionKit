@@ -65,8 +65,10 @@ endif()
 
 
 # Include all dependencies
-find_package(PkgConfig REQUIRED)
-pkg_check_modules(OBS_STUDIO REQUIRED obs-studio)
+#find_package(PkgConfig REQUIRED)
+#pkg_check_modules(OBS_STUDIO REQUIRED obs-studio)
+set(OBS_STUDIO_INCLUDE_DIRS /usr/include/obs)
+set(OBS_STUDIO_LIBRARIES /usr/lib/x86_64-linux-gnu/libobs.so)
 
 target_include_directories(
     ${PROJECT_NAME}
@@ -170,6 +172,8 @@ target_sources(
     ${PROJECT_NAME}
     PRIVATE
         Sources/Module.cpp
+        Sources/AI/ODFilter.cpp
+        Sources/AI/ODFilter.hpp
         Sources/Enhancement/ADBFilter.cpp
         Sources/Enhancement/ADBFilter.hpp
         Sources/Enhancement/ADBSource.cpp
