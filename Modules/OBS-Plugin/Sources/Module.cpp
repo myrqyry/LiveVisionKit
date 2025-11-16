@@ -24,6 +24,7 @@
 
 #include "Effects/FSREffect.hpp"
 #include "Effects/CASEffect.hpp"
+#include "AI/ODFilter.hpp"
 
 //---------------------------------------------------------------------------------------------------------------------
 
@@ -56,6 +57,8 @@ void register_cct_effect_source();
 
 void register_ingest_test_source();
 
+void register_od_source();
+
 //---------------------------------------------------------------------------------------------------------------------
 
 void attach_ocl_interop_context(void* param, uint32_t cx, uint32_t cy)
@@ -67,6 +70,49 @@ void attach_ocl_interop_context(void* param, uint32_t cx, uint32_t cy)
 	// render thread. If this happens, then our OpenCL execution context will be
 	// attached to the wrong thread, and must be updated before running OpenCL code.
 	lvk::ocl::InteropContext::TryAttach();
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+
+namespace {
+    void* od_filter_create(obs_data_t* settings, obs_source_t* source) {
+        return new lvk::ODFilter(source);
+    }
+
+    void od_filter_destroy(void* data) {
+        delete static_cast<lvk::ODFilter*>(data);
+    }
+
+    obs_properties_t* od_filter_properties(void* data) {
+        return lvk::ODFilter::Properties();
+    }
+
+    void od_filter_defaults(obs_data_t* settings) {
+        lvk::ODFilter::LoadDefaults(settings);
+    }
+
+    void od_filter_update(void* data, obs_data_t* settings) {
+        static_cast<lvk::ODFilter*>(data)->configure(settings);
+    }
+
+    void od_filter_render(void* data, gs_effect_t* effect) {
+        static_cast<lvk::ODFilter*>(data)->render();
+    }
+}
+
+void register_od_source() {
+    obs_source_info info = {};
+    info.id = "lvk-od";
+    info.type = OBS_SOURCE_TYPE_FILTER;
+    info.output_flags = OBS_SOURCE_VIDEO;
+    info.get_name = [](void*) { return "LVK Object Detection"; };
+    info.create = od_filter_create;
+    info.destroy = od_filter_destroy;
+    info.get_properties = od_filter_properties;
+    info.get_defaults = od_filter_defaults;
+    info.update = od_filter_update;
+    info.video_render = od_filter_render;
+    obs_register_source(&info);
 }
 
 //---------------------------------------------------------------------------------------------------------------------
@@ -111,6 +157,7 @@ bool obs_module_load()
 	// Register Filters...
 	register_fsr_source();
 	register_cas_source();
+	register_od_source();
 
 	if(has_opencl)
 	{

@@ -30,6 +30,8 @@ target_include_directories(
     PUBLIC 
         ${CMAKE_CURRENT_SOURCE_DIR} 
         ${OpenCV_INCLUDE_DIRS}
+        ${CMAKE_CURRENT_SOURCE_DIR}/../tensorflow
+        ${CMAKE_CURRENT_SOURCE_DIR}/../tensorflow/build/flatbuffers/include
 )    
 
 # Link all dependencies
@@ -43,6 +45,7 @@ target_link_libraries(
     opencv_highgui
     opencv_features2d
     Eigen3::Eigen
+    ${CMAKE_CURRENT_SOURCE_DIR}/../tensorflow/build/libtensorflow-lite.a
 )
 
 if(UNIX)
@@ -154,4 +157,6 @@ target_sources(
         Vision/FrameTracker.hpp
         Vision/PathSmoother.cpp
         Vision/PathSmoother.hpp
+        Vision/ObjectDetector.cpp
+        Vision/ObjectDetector.hpp
 )
